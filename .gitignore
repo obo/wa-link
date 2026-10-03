@@ -1,0 +1,6 @@
+venv/
+state/
+workspace/
+__pycache__/
+.history*
+wa-link.env

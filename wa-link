@@ -1,0 +1,4 @@
+#!/bin/sh
+# Launcher: runs the bridge with the project-local virtualenv.
+HERE="$(cd "$(dirname "$0")" && pwd)"
+exec "$HERE/venv/bin/python" "$HERE/wa_link.py" "$@"
