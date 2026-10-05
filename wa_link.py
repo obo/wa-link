@@ -47,6 +47,7 @@ from neonize.utils.jid import Jid2String, build_jid  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 STATE_DIR = HERE / "state"
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}  # sent as photos; other files as documents
 OUTBOX = STATE_DIR / "outbox"  # files dropped here by `--send` are posted by the running bridge
 BOT_MARK = "🤖"  # prefix of every message the bridge sends (also used for loop protection)
 MAX_CHUNK = 3500  # WhatsApp allows ~65k chars, but long walls of text are unreadable
@@ -399,14 +400,22 @@ class Bridge:
         self.sent_ids.add(resp.ID)
 
     def outbox_loop(self):
-        """Post messages queued by `wa-link --send` (JSON files {"to": jid, "text": ...})."""
+        """Post messages queued by `wa-link --send`/`--send-file` (JSON files {"to": jid, "text": ..., "file": ...})."""
         while True:
             for f in sorted(OUTBOX.glob("*.json")):
                 try:
                     item = json.loads(f.read_text())
-                    to, text = item["to"], item["text"]
+                    to, text, file = item["to"], item.get("text", ""), item.get("file")
                     if to not in self.allowed_groups:
                         log.warning("Outbox: %s is not an allowed --group, dropping %s", to, f.name)
+                    elif file:
+                        jid, caption = build_jid(*to.split("@")), self.bot_text(text or Path(file).name)
+                        if Path(file).suffix.lower() in IMAGE_SUFFIXES:
+                            resp = self.client.send_image(jid, file, caption=caption)
+                        else:
+                            resp = self.client.send_document(jid, file, caption=caption, filename=Path(file).name)
+                        self.sent_ids.add(resp.ID)
+                        log.info("Outbox: sent file %s to %s", file, self.group_names.get(to, to))
                     else:
                         resp = self.client.send_message(build_jid(*to.split("@")), self.bot_text(text))
                         self.sent_ids.add(resp.ID)
@@ -442,6 +451,9 @@ def main():
                     help="connect (pairing first if needed), print the groups of the account and exit")
     ap.add_argument("--send", nargs=2, metavar=("GROUP_JID", "TEXT"),
                     help="queue TEXT for the running bridge to post to GROUP_JID, then exit")
+    ap.add_argument("--send-file", nargs="+", metavar=("GROUP_JID", "FILE"),
+                    help="queue FILE [CAPTION] for the running bridge to post to GROUP_JID (images as photos, "
+                         "anything else as a document), then exit")
     ap.add_argument("--pair-phone", metavar="NUMBER",
                     help="pair with an 8-character code for this phone number instead of a QR code")
     ap.add_argument("--group", action="append", default=env("WA_GROUPS", "").split() or [],
@@ -482,10 +494,17 @@ def main():
     for noisy in ("whatsmeow", "Whatsmeow", "neonize", "Client"):
         logging.getLogger(noisy).setLevel(logging.INFO if args.verbose else logging.WARNING)
 
-    if args.send:
+    if args.send or args.send_file:
+        if args.send:
+            item = {"to": args.send[0], "text": args.send[1]}
+        elif len(args.send_file) in (2, 3) and Path(args.send_file[1]).is_file():
+            item = {"to": args.send_file[0], "file": str(Path(args.send_file[1]).resolve()),
+                    "text": args.send_file[2] if len(args.send_file) == 3 else ""}
+        else:
+            sys.exit("--send-file needs GROUP_JID FILE [CAPTION] with an existing FILE")
         OUTBOX.mkdir(parents=True, exist_ok=True)
         tmp = OUTBOX / f".{time.time_ns()}.tmp"
-        tmp.write_text(json.dumps({"to": args.send[0], "text": args.send[1]}))
+        tmp.write_text(json.dumps(item))
         tmp.rename(tmp.with_name(tmp.name[1:-4] + ".json"))
         print("Queued; the running bridge posts it within a few seconds (see state/wa-link.log).")
         return
