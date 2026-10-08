@@ -220,6 +220,8 @@ class Bridge:
             return
         for g in groups:
             self.group_names[Jid2String(g.JID)] = g.GroupName.Name
+        for jid, name in sorted(self.group_names.items(), key=lambda x: x[1].lower()):
+            log.info("Member of group %s (%s)%s", jid, name, "" if jid in self.allowed_groups else " [not served]")
         if self.args.list_groups:
             print("\nGroups this account is a member of:\n")
             for jid, name in sorted(self.group_names.items(), key=lambda x: x[1].lower()):
