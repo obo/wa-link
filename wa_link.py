@@ -52,6 +52,7 @@ IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}  # sent as photos
 AUDIO_SUFFIXES = {".mp3", ".m4a", ".ogg", ".opus", ".aac", ".wav", ".amr"}  # sent as playable audio messages
 VIDEO_SUFFIXES = {".mp4", ".mov", ".3gp", ".webm", ".mkv"}  # sent as videos; anything else as a document
 OUTBOX = STATE_DIR / "outbox"  # files dropped here by `--send` are posted by the running bridge
+UNSEND_WORDS = {"unsend", "claude unsend"}  # reply with this to a bot message to delete it for everyone
 BOT_MARK = "🤖"  # prefix of every message the bridge sends (also used for loop protection)
 MAX_CHUNK = 3500  # WhatsApp allows ~65k chars, but long walls of text are unreadable
 
@@ -209,6 +210,7 @@ class Bridge:
     def after_connect(self):
         try:
             me = self.client.get_me()
+            self.me_jid = me.JID
             self.me_users = {u for u in (jid_user(me.JID), jid_user(me.LID)) if u}
             log.info("Connected to WhatsApp as +%s (%s)", jid_user(me.JID), me.PushName)
         except Exception as e:  # noqa: BLE001
@@ -266,6 +268,9 @@ class Bridge:
                      ", ".join(sorted(sender_ids)))
             return
 
+        if text.strip().lower().lstrip("/") in UNSEND_WORDS and ctx is not None and ctx.stanzaID:
+            self.unsend(src.Chat, chat, ctx)
+            return
         addressed, clean = self.is_addressed(text, ctx)
         if not addressed:
             log.info("[%s] %s: %s  (not addressed to Claude, kept as context)",
@@ -277,6 +282,24 @@ class Bridge:
             return
         log.info("[%s] %s: %s", self.group_names.get(chat, chat), sender, clean[:200])
         self.queue_for(chat).put((ev, sender, clean))
+
+    def unsend(self, chat_jid, chat: str, ctx):
+        """'unsend' as a reply to one of the bot's messages: delete that message for everyone."""
+        author = (ctx.participant or "").split("@")[0].split(":")[0]
+        name = self.group_names.get(chat, chat)
+        if author not in self.me_users:
+            log.info("[%s] unsend ignored: the quoted message %s is not the bot's", name, ctx.stanzaID)
+            self.reply_text(chat_jid, "unsend works only as a reply to one of my own messages.")
+            return
+        try:
+            self.client.revoke_message(chat_jid, self.me_jid, ctx.stanzaID)
+            log.info("[%s] unsent (deleted for everyone) bot message %s", name, ctx.stanzaID)
+        except Exception as e:  # noqa: BLE001
+            log.error("[%s] cannot unsend %s: %s", name, ctx.stanzaID, e)
+            self.reply_text(chat_jid, f"Could not delete that message: {e}")
+
+    def reply_text(self, chat_jid, text: str):
+        self.sent_ids.add(self.client.send_message(chat_jid, self.bot_text(text)).ID)
 
     def is_addressed(self, text: str, ctx) -> tuple[bool, str]:
         """Decide whether the message is meant for Claude; return cleaned text."""

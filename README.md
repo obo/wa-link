@@ -81,6 +81,9 @@ Use `--all` to make Claude answer every message.
 Other group messages are not answered. The last 30 of them (`--context-messages`) are sent along
 with the next request, so Claude knows what the group was discussing.
 
+To delete one of the bot's messages for everyone, reply to it (swipe → reply) with just `unsend`. This works in every
+served group; only allowed senders can do it.
+
 Commands, typed after the trigger: `claude /reset` starts a new Claude session for the group,
 and `claude /status` shows the session id and working directory.
 
