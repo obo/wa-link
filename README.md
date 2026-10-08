@@ -105,6 +105,8 @@ Claude account.
   group where you trust every member.
 * `--allow-sender 420123456789` (repeatable) limits which phone numbers Claude accepts requests from.
 * Groups not passed with `--group` are ignored completely.
+* `--group JID=WORKDIR` gives a group its own working directory (own files, Claude sessions and project memory),
+  e.g. `--group 1203…@g.us=$HOME/personal-sessions`; all groups are served by the same bridge and number.
 
 WhatsApp does not officially support unofficial clients like this one. Using one can, rarely, get the account banned.
 Do not use it for bulk messaging. This is one more reason to use a separate number.

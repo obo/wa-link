@@ -147,7 +147,13 @@ class Bridge:
         self.client = NewClient(str(STATE_DIR / "whatsapp.sqlite3"))
         self.sessions = Sessions(STATE_DIR / "sessions.json")
         self.trigger = re.compile(args.trigger, re.IGNORECASE) if args.trigger else None
-        self.allowed_groups = set(args.group)
+        # --group JID or JID=WORKDIR: each group can have its own working directory (independent sessions,
+        # files and Claude Code project memory), all served by this one bridge / WhatsApp number
+        self.group_workdir = {}
+        for g in args.group:
+            jid, _, wd = g.partition("=")
+            self.group_workdir[jid] = os.path.expanduser(wd) if wd else args.workdir
+        self.allowed_groups = set(self.group_workdir)
         self.allowed_senders = {s.lstrip("+") for s in args.allow_sender}
         self.me_users: set[str] = set()
         self.group_names: dict[str, str] = {}
@@ -315,7 +321,7 @@ class Bridge:
             return
         if cmd == "/status":
             sid = self.sessions.get(chat) or "none yet"
-            self.reply(ev, self.bot_text(f"wa-link is running. Session: {sid}\nWorkdir: {self.args.workdir}"))
+            self.reply(ev, self.bot_text(f"wa-link is running. Session: {sid}\nWorkdir: {self.group_workdir.get(chat, self.args.workdir)}"))
             return
         if not text:
             text = "(empty message)"
@@ -357,7 +363,7 @@ class Bridge:
             log.debug("Running %s", cmd)
             try:
                 p = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
-                                   cwd=a.workdir, timeout=a.timeout)
+                                   cwd=self.group_workdir.get(chat, a.workdir), timeout=a.timeout)
             except subprocess.TimeoutExpired:
                 return f"Sorry, Claude Code did not finish within {a.timeout} s."
             try:
@@ -457,7 +463,8 @@ def main():
     ap.add_argument("--pair-phone", metavar="NUMBER",
                     help="pair with an 8-character code for this phone number instead of a QR code")
     ap.add_argument("--group", action="append", default=env("WA_GROUPS", "").split() or [],
-                    metavar="JID", help="group JID (…@g.us) to serve; repeatable [env WA_GROUPS]")
+                    metavar="JID[=WORKDIR]", help="group JID (…@g.us) to serve, optionally with its own working "
+                    "directory (default --workdir); repeatable [env WA_GROUPS]")
     ap.add_argument("--trigger", default=env("WA_TRIGGER", r"^@?claude\b"),
                     help="regex (case-insensitive, matched at start) that addresses Claude. "
                          "Mentioning the bot's number or replying to its answer also works. "
@@ -513,6 +520,9 @@ def main():
     STATE_DIR.mkdir(exist_ok=True)
     OUTBOX.mkdir(exist_ok=True)
     Path(args.workdir).mkdir(parents=True, exist_ok=True)
+    for g in args.group:
+        if "=" in g:
+            Path(os.path.expanduser(g.partition("=")[2])).mkdir(parents=True, exist_ok=True)
     if not args.list_groups and not shutil.which(args.claude_bin):
         sys.exit(f"Cannot find the Claude Code executable '{args.claude_bin}' (use --claude-bin).")
     Bridge(args).run()
