@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import faulthandler
 import json
+import mimetypes
 import logging
 import os
 import queue
@@ -47,7 +48,9 @@ from neonize.utils.jid import Jid2String, build_jid  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 STATE_DIR = HERE / "state"
-IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}  # sent as photos; other files as documents
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}  # sent as photos
+AUDIO_SUFFIXES = {".mp3", ".m4a", ".ogg", ".opus", ".aac", ".wav", ".amr"}  # sent as playable audio messages
+VIDEO_SUFFIXES = {".mp4", ".mov", ".3gp", ".webm", ".mkv"}  # sent as videos; anything else as a document
 OUTBOX = STATE_DIR / "outbox"  # files dropped here by `--send` are posted by the running bridge
 BOT_MARK = "🤖"  # prefix of every message the bridge sends (also used for loop protection)
 MAX_CHUNK = 3500  # WhatsApp allows ~65k chars, but long walls of text are unreadable
@@ -418,10 +421,19 @@ class Bridge:
                         log.warning("Outbox: %s is not an allowed --group, dropping %s", to, f.name)
                     elif file:
                         jid, caption = build_jid(*to.split("@")), self.bot_text(text or Path(file).name)
-                        if Path(file).suffix.lower() in IMAGE_SUFFIXES:
+                        suffix, as_doc = Path(file).suffix.lower(), item.get("as_document")
+                        if suffix in IMAGE_SUFFIXES and not as_doc:
                             resp = self.client.send_image(jid, file, caption=caption)
+                        elif suffix in AUDIO_SUFFIXES and not as_doc:
+                            # audio messages carry no caption: post it as a text message first
+                            self.sent_ids.add(self.client.send_message(jid, caption).ID)
+                            resp = self.client.send_audio(jid, file, ptt=bool(item.get("voice")))
+                        elif suffix in VIDEO_SUFFIXES and not as_doc:
+                            resp = self.client.send_video(jid, file, caption=caption)
                         else:
-                            resp = self.client.send_document(jid, file, caption=caption, filename=Path(file).name)
+                            resp = self.client.send_document(jid, file, caption=caption, filename=Path(file).name,
+                                                             mimetype=mimetypes.guess_type(file)[0]
+                                                             or "application/octet-stream")
                         self.sent_ids.add(resp.ID)
                         log.info("Outbox: sent file %s to %s", file, self.group_names.get(to, to))
                     else:
@@ -461,7 +473,9 @@ def main():
                     help="queue TEXT for the running bridge to post to GROUP_JID, then exit")
     ap.add_argument("--send-file", nargs="+", metavar=("GROUP_JID", "FILE"),
                     help="queue FILE [CAPTION] for the running bridge to post to GROUP_JID (images as photos, "
-                         "anything else as a document), then exit")
+                         "audio as playable audio, video as video, anything else as a document), then exit")
+    ap.add_argument("--as-document", action="store_true", help="with --send-file: always send as a document")
+    ap.add_argument("--voice", action="store_true", help="with --send-file: send audio as a voice note (ptt)")
     ap.add_argument("--pair-phone", metavar="NUMBER",
                     help="pair with an 8-character code for this phone number instead of a QR code")
     ap.add_argument("--group", action="append", default=env("WA_GROUPS", "").split() or [],
@@ -508,7 +522,8 @@ def main():
             item = {"to": args.send[0], "text": args.send[1]}
         elif len(args.send_file) in (2, 3) and Path(args.send_file[1]).is_file():
             item = {"to": args.send_file[0], "file": str(Path(args.send_file[1]).resolve()),
-                    "text": args.send_file[2] if len(args.send_file) == 3 else ""}
+                    "text": args.send_file[2] if len(args.send_file) == 3 else "",
+                    "as_document": args.as_document, "voice": args.voice}
         else:
             sys.exit("--send-file needs GROUP_JID FILE [CAPTION] with an existing FILE")
         OUTBOX.mkdir(parents=True, exist_ok=True)

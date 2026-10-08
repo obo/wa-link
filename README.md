@@ -85,7 +85,7 @@ Commands, typed after the trigger: `claude /reset` starts a new Claude session f
 and `claude /status` shows the session id and working directory.
 
 To post into an allowed group from this machine (a script, cron job, or another Claude Code
-session), use `./wa-link --send <GROUP_JID> "text"`, or `./wa-link --send-file <GROUP_JID> FILE [CAPTION]` for an image (sent as a photo) or any other file (sent as a document). The message is queued in `state/outbox/` and the
+session), use `./wa-link --send <GROUP_JID> "text"`, or `./wa-link --send-file <GROUP_JID> FILE [CAPTION]` for an image (sent as a photo), audio such as mp3 (playable audio message; `--voice` = voice note), video, or any other file (sent as a document; `--as-document` forces this). The message is queued in `state/outbox/` and the
 running bridge posts it within a few seconds.
 
 While Claude is working, the group sees "typing…". Long answers are split into several messages.
