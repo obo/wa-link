@@ -444,14 +444,14 @@ class Bridge:
                         log.warning("Outbox: %s is not an allowed --group, dropping %s", to, f.name)
                     elif file:
                         jid, caption = build_jid(*to.split("@")), self.bot_text(text or Path(file).name)
-                        suffix, as_doc = Path(file).suffix.lower(), item.get("as_document")
-                        if suffix in IMAGE_SUFFIXES and not as_doc:
+                        suffix = Path(file).suffix.lower()
+                        if suffix in IMAGE_SUFFIXES:
                             resp = self.client.send_image(jid, file, caption=caption)
-                        elif suffix in AUDIO_SUFFIXES and not as_doc:
+                        elif suffix in AUDIO_SUFFIXES:
                             # audio messages carry no caption: post it as a text message first
                             self.sent_ids.add(self.client.send_message(jid, caption).ID)
                             resp = self.client.send_audio(jid, file, ptt=bool(item.get("voice")))
-                        elif suffix in VIDEO_SUFFIXES and not as_doc:
+                        elif suffix in VIDEO_SUFFIXES:
                             resp = self.client.send_video(jid, file, caption=caption)
                         else:
                             resp = self.client.send_document(jid, file, caption=caption, filename=Path(file).name,
@@ -497,7 +497,6 @@ def main():
     ap.add_argument("--send-file", nargs="+", metavar=("GROUP_JID", "FILE"),
                     help="queue FILE [CAPTION] for the running bridge to post to GROUP_JID (images as photos, "
                          "audio as playable audio, video as video, anything else as a document), then exit")
-    ap.add_argument("--as-document", action="store_true", help="with --send-file: always send as a document")
     ap.add_argument("--voice", action="store_true", help="with --send-file: send audio as a voice note (ptt)")
     ap.add_argument("--pair-phone", metavar="NUMBER",
                     help="pair with an 8-character code for this phone number instead of a QR code")
@@ -546,7 +545,7 @@ def main():
         elif len(args.send_file) in (2, 3) and Path(args.send_file[1]).is_file():
             item = {"to": args.send_file[0], "file": str(Path(args.send_file[1]).resolve()),
                     "text": args.send_file[2] if len(args.send_file) == 3 else "",
-                    "as_document": args.as_document, "voice": args.voice}
+                    "voice": args.voice}
         else:
             sys.exit("--send-file needs GROUP_JID FILE [CAPTION] with an existing FILE")
         OUTBOX.mkdir(parents=True, exist_ok=True)
