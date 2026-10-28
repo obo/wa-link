@@ -81,6 +81,14 @@ Use `--all` to make Claude answer every message.
 Other group messages are not answered. The last 30 of them (`--context-messages`) are sent along
 with the next request, so Claude knows what the group was discussing.
 
+Files sent to a served group (audio and voice notes, images, videos, documents; not stickers, locations or contacts) from an allowed
+sender are stored in `received-media/` inside that group's working directory (`~/sessions/received-media/` or
+`~/personal-sessions/received-media/`), as `<time>-<sender>-<name>.<ext>` with a `.json` sidecar (description, MIME type, caption,
+sender, message id). The bridge answers `Media <description> received. What should be done with it?`, e.g. `Media audio (voice note,
+0:23, audio/ogg) received. What should be done with it?`; the path is added to the group context, so the next question to Claude
+("transcribe it") knows the file. If the caption addresses Claude (trigger word or reply), the file is passed to Claude together with
+its path instead of the generic question.
+
 To delete one of the bot's messages for everyone, reply to it (swipe → reply) with just `unsend`. This works in every
 served group; only allowed senders can do it.
 

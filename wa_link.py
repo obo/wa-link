@@ -92,6 +92,51 @@ def extract_text(msg) -> tuple[str, object | None]:
     return "", None
 
 
+MEDIA_KINDS = ("audioMessage", "imageMessage", "videoMessage", "documentMessage")  # stickers, locations and contacts are not stored
+
+
+def media_of(msg):
+    """(kind, submessage, message-to-download) if the message carries a file, else None (documents with a caption are wrapped)"""
+    for kind in MEDIA_KINDS:
+        if msg.HasField(kind):
+            return kind, getattr(msg, kind), msg
+    if msg.HasField("documentWithCaptionMessage") and msg.documentWithCaptionMessage.message.HasField("documentMessage"):
+        inner = msg.documentWithCaptionMessage.message
+        return "documentMessage", inner.documentMessage, inner
+    return None
+
+
+def media_description(kind: str, m) -> str:
+    """short human description of a received file, e.g. 'audio (voice note, 0:23, audio/ogg)'"""
+    mime = (m.mimetype or "").split(";")[0]
+    bits = []
+    if kind == "audioMessage":
+        what = "audio"
+        if m.PTT:
+            bits.append("voice note")
+        if m.seconds:
+            bits.append(f"{m.seconds // 60}:{m.seconds % 60:02d}")
+    elif kind == "imageMessage":
+        what = "image"
+        if m.width and m.height:
+            bits.append(f"{m.width}x{m.height}")
+    elif kind == "videoMessage":
+        what = "video"
+        if m.seconds:
+            bits.append(f"{m.seconds // 60}:{m.seconds % 60:02d}")
+        if m.width and m.height:
+            bits.append(f"{m.width}x{m.height}")
+    else:
+        what = f"document '{m.fileName}'" if m.fileName else "document"
+        if m.fileLength:
+            bits.append(f"{m.fileLength / 1e6:.1f} MB" if m.fileLength >= 1e6 else f"{max(1, m.fileLength // 1000)} kB")
+    if mime:
+        bits.append(mime)
+    caption = (getattr(m, "caption", "") or "").strip()
+    d = what + (f" ({', '.join(bits)})" if bits else "")
+    return d + (f', caption: "{caption[:80]}"' if caption else "")
+
+
 def split_chunks(text: str, limit: int = MAX_CHUNK) -> list[str]:
     chunks = []
     while len(text) > limit:
@@ -268,6 +313,10 @@ class Bridge:
                      ", ".join(sorted(sender_ids)))
             return
 
+        media = media_of(ev.Message)
+        if media is not None:
+            threading.Thread(target=self.handle_media, args=(chat, ev, sender, media, ctx), daemon=True).start()
+            return
         if text.strip().lower().lstrip("/") in UNSEND_WORDS and ctx is not None and ctx.stanzaID:
             self.unsend(src.Chat, chat, ctx)
             return
@@ -282,6 +331,52 @@ class Bridge:
             return
         log.info("[%s] %s: %s", self.group_names.get(chat, chat), sender, clean[:200])
         self.queue_for(chat).put((ev, sender, clean))
+
+    def handle_media(self, chat: str, ev, sender: str, media, ctx):
+        """Store a received file in <workdir>/received-media/ (with a .json sidecar) and ask what to do with it; a file whose
+        caption addresses Claude is passed on to Claude together with the path instead."""
+        kind, m, full = media
+        desc = media_description(kind, m)
+        caption = (getattr(m, "caption", "") or "").strip()
+        info = ev.Info
+        wd = Path(self.group_workdir.get(chat, self.args.workdir))
+        d = wd / "received-media"
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            data = self.client.download_any(full)
+            if not data:
+                raise RuntimeError("download returned no data")
+            mime = (m.mimetype or "").split(";")[0]
+            ext = Path(getattr(m, "fileName", "") or "").suffix or {"audio/ogg": ".ogg", "audio/mpeg": ".mp3", "audio/mp4": ".m4a"}.get(mime) or mimetypes.guess_extension(mime) or ".bin"
+            ts = info.Timestamp / 1000 if info.Timestamp > 1e12 else info.Timestamp
+            stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(ts or time.time()))
+            base = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(getattr(m, "fileName", "") or kind.replace("Message", "")).stem)[:60]
+            who = re.sub(r"[^A-Za-z0-9]+", "", sender)[:20] or "unknown"
+            path = d / f"{stamp}-{who}-{base}{ext}"
+            n = 1
+            while path.exists():
+                n += 1
+                path = d / f"{stamp}-{who}-{base}-{n}{ext}"
+            path.write_bytes(data)
+            path.with_name(path.name + ".json").write_text(json.dumps(
+                {"description": desc, "kind": kind, "mimetype": m.mimetype, "caption": caption, "sender": sender, "chat": chat,
+                 "group": self.group_names.get(chat, chat), "message_id": info.ID, "timestamp": ts, "bytes": len(data),
+                 "original_name": getattr(m, "fileName", "") or ""}, ensure_ascii=False, indent=1))
+            rel = f"received-media/{path.name}"
+            log.info("[%s] %s: media %s saved as %s (%d bytes)", self.group_names.get(chat, chat), sender, desc, path, len(data))
+        except Exception as e:  # noqa: BLE001
+            log.error("cannot store media of %s: %s", sender, e)
+            self.reply(ev, self.bot_text(f"Media {desc} received, but I could not save it: {e}"))
+            return
+        addressed, clean = self.is_addressed(caption, ctx) if caption else (False, "")
+        if addressed and clean:
+            self.queue_for(chat).put((ev, sender, f"[{desc}, saved as {rel} in your working directory] {clean}"))
+            return
+        with self.lock:  # so that the next question to Claude knows where the file is
+            buf = self.context.setdefault(chat, [])
+            buf.append(f"{sender}: [sent {desc}; saved as {rel} in your working directory]" + (f" {caption}" if caption else ""))
+            del buf[: -self.args.context_messages]
+        self.reply(ev, self.bot_text(f"Media {desc} received. What should be done with it?"))
 
     def unsend(self, chat_jid, chat: str, ctx):
         """'unsend' as a reply to one of the bot's messages: delete that message for everyone."""
