@@ -144,9 +144,28 @@ Most options can also be set through environment variables: `WA_GROUPS` (space-s
 | `state/sessions.json` | group JID → Claude Code session id |
 | `workspace/` | Claude Code's working directory |
 
+## Re-linking after a logout
+
+1. Check on the bot phone under **Settings → Linked devices** whether the device was removed there.
+2. Run `./restart.sh`. When the bridge has exited with "Logged out by WhatsApp", it leaves a marker
+   `state/logged-out`. On the next start it **keeps** the old session as
+   `state/whatsapp.sqlite3.logged-out-<timestamp>` (never deleted) and starts a fresh pairing.
+3. Pair as in section 2: scan the QR code from the end of `state/wa-link.log` or `state/pairing-qr.png`
+   (it expires after ~20 s; a stale picture will not work). If the phone (notably WhatsApp Business)
+   stays on "Logging in", use the code instead: stop the bridge and start it by hand,
+   `. ./wa-link.env; cd $WA_WORKDIR; /path/to/wa-link $WA_ARGS --pair-phone <bot-number>`, then enter
+   the 8-character code under **Link a device → Link with phone number instead** (valid for only a
+   couple of minutes).
+4. After "Paired as ..." in the log, run `./restart.sh` once more if no "Connected to WhatsApp" line
+   follows (the first connection after pairing may hang). Then check that the groups are listed as
+   "Serving group".
+
 ## Troubleshooting
 
-* **Logged out / "LoggedOut" in the log:** delete `state/whatsapp.sqlite3` and pair again.
+* **Bot silent; log ends with "Got device removed stream error ... Logged out by WhatsApp":**
+  WhatsApp occasionally drops the linked device on its own (seen once after weeks of uptime; the
+  cause is not visible from our side). The bridge then exits and stays down, so it must be re-linked
+  by hand. See "Re-linking after a logout" below.
 * **Nothing happens on a message:** run with `-v`. Check that the group JID is in `--group` and that
   the message matches the trigger. Messages older than 15 minutes (`--max-age`) are skipped. This
   avoids a flood of answers after downtime.

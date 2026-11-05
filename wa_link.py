@@ -244,7 +244,8 @@ class Bridge:
         (STATE_DIR / "pairing-qr.png").unlink(missing_ok=True)
 
     def on_logged_out(self, _c, _ev):
-        log.error("Logged out by WhatsApp. Delete state/whatsapp.sqlite3 and pair again.")
+        (STATE_DIR / "logged-out").touch()
+        log.error("Logged out by WhatsApp. The old session is kept (archived on next start); restart to pair again.")
         os._exit(2)
 
     def on_connected(self, _c, _ev):
@@ -653,6 +654,16 @@ def main():
     faulthandler.register(signal.SIGUSR1, all_threads=True)
     STATE_DIR.mkdir(exist_ok=True)
     OUTBOX.mkdir(exist_ok=True)
+    marker = STATE_DIR / "logged-out"
+    if marker.exists() and not (args.list_groups or args.send or args.send_file):
+        # Session was revoked by WhatsApp: keep it under a new name and start with a fresh one.
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        for suf in ("", "-wal", "-shm"):
+            f = STATE_DIR / f"whatsapp.sqlite3{suf}"
+            if f.exists():
+                f.rename(STATE_DIR / f"whatsapp.sqlite3.logged-out-{stamp}{suf}")
+        marker.unlink()
+        log.warning("Archived the logged-out session as whatsapp.sqlite3.logged-out-%s", stamp)
     Path(args.workdir).mkdir(parents=True, exist_ok=True)
     for g in args.group:
         if "=" in g:

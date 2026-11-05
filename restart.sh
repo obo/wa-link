@@ -11,3 +11,5 @@ cd "${WA_WORKDIR:-$HERE/workspace}" || exit 1
 mkdir -p "$HERE/state"
 # shellcheck disable=SC2086  # WA_ARGS is a list of options
 PYTHONUNBUFFERED=1 nohup "$HERE/wa-link" $WA_ARGS >> "$HERE/state/wa-link.log" 2>&1 &
+# If WhatsApp logged us out, the bridge archives the old session (state/whatsapp.sqlite3.logged-out-*)
+# on start and shows a pairing QR code in state/wa-link.log and state/pairing-qr.png.
