@@ -139,10 +139,22 @@ Most options can also be set through environment variables: `WA_GROUPS` (space-s
 | `wa_link.py` | the bridge |
 | `wa-link` | launcher that uses `./venv` |
 | `restart.sh` | background (re)start with the settings from `wa-link.env` |
+| `watcher.sh` | cron watchdog: restarts the bridge if it is not running |
 | `wa-link.env.example` | template for the local, unversioned `wa-link.env` |
 | `state/whatsapp.sqlite3` | WhatsApp login and encryption keys (**secret**) |
 | `state/sessions.json` | group JID → Claude Code session id |
 | `workspace/` | Claude Code's working directory |
+
+## Automatic restart after a reboot (watcher)
+
+`./watcher.sh` is a very light check (one `pgrep`) meant for cron. If the bridge is not running it calls
+`./restart.sh` and logs a line to `state/watcher.log`. It does nothing while `state/logged-out` exists
+(WhatsApp unlinked the device; see re-linking below), so it never loops on a dead login. Crontab line
+(`crontab -e`), every 10 minutes:
+
+```
+*/10 * * * * /lnet/work/AGENTS/home/bojar-agent/sessions/wa-link/watcher.sh
+```
 
 ## Re-linking after a logout
 
