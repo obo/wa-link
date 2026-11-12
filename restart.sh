@@ -4,6 +4,8 @@
 # Usage: setsid nohup ./restart.sh [DELAY_S] >/dev/null 2>&1 &
 HERE="$(cd "$(dirname "$0")" && pwd)"
 sleep "${1:-0}"
+# cron (watcher.sh) runs with a minimal PATH; claude is usually installed in ~/.local/bin
+export PATH="$HOME/.local/bin:$PATH"
 set -a; . "$HERE/wa-link.env"; set +a
 pkill -f "^$HERE/venv/bin/python $HERE/wa_link.py"
 sleep 3
